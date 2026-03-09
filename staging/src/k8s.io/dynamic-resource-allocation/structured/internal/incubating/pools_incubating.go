@@ -55,7 +55,7 @@ func NodeMatches(node *v1.Node, nodeNameToMatch string, allNodesMatch bool, node
 // Out-dated slices are silently ignored. Pools may be incomplete (not all
 // required slices available) or invalid (for example, device names not unique).
 // Both is recorded in the result.
-func GatherPools(ctx context.Context, slices []*resourceapi.ResourceSlice, node *v1.Node, features Features) ([]*Pool, error) {
+func GatherPools(ctx context.Context, slices []*resourceapi.ResourceSlice, allSlices []*resourceapi.ResourceSlice, node *v1.Node, features Features) ([]*Pool, error) {
 	pools := make(map[PoolID][]*draapi.ResourceSlice)
 	var slicesWithBindingConditions []*resourceapi.ResourceSlice
 
@@ -155,7 +155,7 @@ func GatherPools(ctx context.Context, slices []*resourceapi.ResourceSlice, node 
 		// which were filtered out above because their node selection made them look irrelevant
 		// for the current node. This is necessary for "allocate all" mode (it rejects incomplete
 		// pools).
-		isObsolete, allSlicesForPool := checkSlicesInPool(slices, poolID, slicesForPool[0].Spec.Pool.Generation)
+		isObsolete, allSlicesForPool := checkSlicesInPool(allSlices, poolID, slicesForPool[0].Spec.Pool.Generation)
 		if isObsolete {
 			// A more thorough check determined that the DRA driver is in the process
 			// of replacing the current generation. The newer one didn't have any slice

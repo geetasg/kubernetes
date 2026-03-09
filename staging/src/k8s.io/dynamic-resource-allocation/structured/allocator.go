@@ -117,7 +117,7 @@ type Allocator interface {
 	//
 	// Context cancellation is supported. An error wrapping the context's error will
 	// be returned in case of cancellation.
-	Allocate(ctx context.Context, node *v1.Node, claims []*resourceapi.ResourceClaim) (finalResult []resourceapi.AllocationResult, finalErr error)
+	Allocate(ctx context.Context, node *v1.Node, claims []*resourceapi.ResourceClaim, nodeSlices []*resourceapi.ResourceSlice) (finalResult []resourceapi.AllocationResult, finalErr error)
 }
 
 // NewAllocator returns an allocator for a certain set of claims or an error if

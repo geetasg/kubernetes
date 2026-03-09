@@ -91,6 +91,9 @@ type stateData struct {
 	// Allocator handles claims with structured parameters, which is all of them nowadays.
 	allocator structured.Allocator
 
+	// sliceIndex provides O(1) lookup of ResourceSlices by node name.
+	sliceIndex *structured.SliceIndex
+
 	// mutex must be locked while accessing any of the fields below.
 	mutex sync.Mutex
 
@@ -562,12 +565,14 @@ func (pl *DynamicResources) PreFilter(ctx context.Context, state fwk.CycleState,
 		if err != nil {
 			return nil, statusError(logger, err)
 		}
+		sliceIndex := structured.NewSliceIndex(slices)
 		features := AllocatorFeatures(pl.fts)
 		allocator, err := structured.NewAllocator(ctx, features, *allocatedState, pl.draManager.DeviceClasses(), slices, pl.celCache)
 		if err != nil {
 			return nil, statusError(logger, err)
 		}
 		s.allocator = allocator
+		s.sliceIndex = sliceIndex
 		s.nodeAllocations = make(map[string]nodeAllocation)
 	}
 	s.claims = claims
@@ -712,7 +717,7 @@ func (pl *DynamicResources) Filter(ctx context.Context, cs fwk.CycleState, pod *
 			}
 			claimsToAllocate = append(claimsToAllocate, claim)
 		}
-		a, err := state.allocator.Allocate(allocCtx, node, claimsToAllocate)
+		a, err := state.allocator.Allocate(allocCtx, node, claimsToAllocate, state.sliceIndex.SlicesForNode(node.Name))
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return statusUnschedulable(logger, "timed out trying to allocate devices", "pod", klog.KObj(pod), "node", klog.KObj(node), "resourceclaims", klog.KObjSlice(claimsToAllocate))

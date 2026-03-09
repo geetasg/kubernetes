@@ -107,7 +107,7 @@ func (a *Allocator) Channel() internal.AllocatorChannel {
 	return internal.Incubating
 }
 
-func (a *Allocator) Allocate(ctx context.Context, node *v1.Node, claims []*resourceapi.ResourceClaim) (finalResult []resourceapi.AllocationResult, finalErr error) {
+func (a *Allocator) Allocate(ctx context.Context, node *v1.Node, claims []*resourceapi.ResourceClaim, nodeSlices []*resourceapi.ResourceSlice) (finalResult []resourceapi.AllocationResult, finalErr error) {
 	alloc := &allocator{
 		Allocator:            a,
 		ctx:                  ctx, // all methods share the same a and thus ctx
@@ -126,7 +126,11 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node, claims []*resou
 	}()
 
 	// First determine all eligible pools.
-	pools, err := GatherPools(ctx, alloc.slices, node, a.features)
+	slicesForGather := nodeSlices
+	if len(slicesForGather) == 0 {
+		slicesForGather = alloc.slices
+	}
+	pools, err := GatherPools(ctx, slicesForGather, alloc.slices, node, a.features)
 	if err != nil {
 		return nil, fmt.Errorf("gather pool information: %w", err)
 	}

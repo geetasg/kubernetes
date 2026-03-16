@@ -34,6 +34,7 @@ import (
 	corev1helpers "k8s.io/component-helpers/scheduling/corev1"
 	corev1nodeaffinity "k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	resourceslicetracker "k8s.io/dynamic-resource-allocation/resourceslice/tracker"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/klog/v2"
 	fwk "k8s.io/kube-scheduler/framework"
 	"k8s.io/kubernetes/pkg/features"
@@ -579,9 +580,36 @@ func addAllEventHandlers(
 			handlers = append(handlers, handlerRegistration)
 		case fwk.ResourceClaim:
 			if utilfeature.DefaultFeatureGate.Enabled(features.DynamicResourceAllocation) {
-				handlerRegistration = resourceClaimCache.AddEventHandler(
-					buildEvtResHandler(at, fwk.ResourceClaim),
-				)
+				funcs := buildEvtResHandler(at, fwk.ResourceClaim)
+				if at&fwk.Add != 0 {
+					evt := fwk.ClusterEvent{Resource: fwk.ResourceClaim, ActionType: fwk.Add}
+					funcs.AddFunc = func(obj interface{}) {
+						start := time.Now()
+						defer metrics.EventHandlingLatency.WithLabelValues(evt.Label()).Observe(metrics.SinceInSeconds(start))
+						if claim, ok := obj.(*resourceapi.ResourceClaim); ok {
+							if podKey := claimOwnerPodKey(claim); podKey != "" {
+								sched.SchedulingQueue.MoveOneToActiveOrBackoffQueue(logger, evt, nil, obj, podKey)
+								return
+							}
+						}
+						sched.SchedulingQueue.MoveAllToActiveOrBackoffQueue(logger, evt, nil, obj, nil)
+					}
+				}
+				if at&fwk.Update != 0 {
+					evt := fwk.ClusterEvent{Resource: fwk.ResourceClaim, ActionType: fwk.Update}
+					funcs.UpdateFunc = func(old, obj interface{}) {
+						start := time.Now()
+						defer metrics.EventHandlingLatency.WithLabelValues(evt.Label()).Observe(metrics.SinceInSeconds(start))
+						if claim, ok := obj.(*resourceapi.ResourceClaim); ok {
+							if podKey := claimOwnerPodKey(claim); podKey != "" {
+								sched.SchedulingQueue.MoveOneToActiveOrBackoffQueue(logger, evt, old, obj, podKey)
+								return
+							}
+						}
+						sched.SchedulingQueue.MoveAllToActiveOrBackoffQueue(logger, evt, old, obj, nil)
+					}
+				}
+				handlerRegistration = resourceClaimCache.AddEventHandler(funcs)
 				handlers = append(handlers, handlerRegistration)
 			}
 		case fwk.ResourceSlice:
@@ -715,4 +743,13 @@ type AdmissionResult struct {
 	Name                 string
 	Reason               string
 	InsufficientResource *noderesources.InsufficientResource
+}
+
+func claimOwnerPodKey(claim *resourceapi.ResourceClaim) string {
+	for _, ref := range claim.OwnerReferences {
+		if ref.Kind == "Pod" && ref.APIVersion == "v1" {
+			return ref.Name + "_" + claim.Namespace
+		}
+	}
+	return ""
 }

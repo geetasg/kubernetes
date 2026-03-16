@@ -120,6 +120,7 @@ type SchedulingQueue interface {
 	// (e.g., filter Pods based on added/updated Node's capacity, etc.)
 	// We know currently some do, but we'll eventually remove them in favor of the scheduling queue hint.
 	MoveAllToActiveOrBackoffQueue(logger klog.Logger, event fwk.ClusterEvent, oldObj, newObj interface{}, preCheck PreEnqueueCheck)
+	MoveOneToActiveOrBackoffQueue(logger klog.Logger, event fwk.ClusterEvent, oldObj, newObj interface{}, podKey string)
 	AssignedPodAdded(logger klog.Logger, pod *v1.Pod)
 	AssignedPodUpdated(logger klog.Logger, oldPod, newPod *v1.Pod, event fwk.ClusterEvent)
 
@@ -1160,6 +1161,16 @@ func (p *PriorityQueue) MoveAllToActiveOrBackoffQueue(logger klog.Logger, event 
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.moveAllToActiveOrBackoffQueue(logger, event, oldObj, newObj, preCheck)
+}
+
+func (p *PriorityQueue) MoveOneToActiveOrBackoffQueue(logger klog.Logger, event fwk.ClusterEvent, oldObj, newObj interface{}, podKey string) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	pInfo, exists := p.unschedulablePods.podInfoMap[podKey]
+	if !exists {
+		return
+	}
+	p.movePodsToActiveOrBackoffQueue(logger, []*framework.QueuedPodInfo{pInfo}, event, oldObj, newObj)
 }
 
 // requeuePodWithQueueingStrategy tries to requeue Pod to activeQ, backoffQ or unschedulable pod pool based on schedulingHint.

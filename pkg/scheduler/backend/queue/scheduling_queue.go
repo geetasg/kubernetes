@@ -49,6 +49,7 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/backend/heap"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+	names "k8s.io/kubernetes/pkg/scheduler/framework/plugins/names"
 	"k8s.io/kubernetes/pkg/scheduler/framework/api_calls"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/interpodaffinity"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/podtopologyspread"
@@ -479,6 +480,11 @@ func (p *PriorityQueue) isPodWorthRequeuing(logger klog.Logger, pInfo *framework
 		// We return queueAfterBackoff in this case, while resetting all blocked plugins.
 		logger.V(6).Info("Worth requeuing because the event is wildcard", "pod", klog.KObj(pInfo.Pod), "event", event.Label())
 		return queueAfterBackoff
+	}
+
+	// Skip pods gated on a missing resource claim for node events.
+	if pInfo.Gated() && event.Resource == fwk.Node && pInfo.GatingPlugin == names.DynamicResources {
+		return queueSkip
 	}
 
 	hintMap, ok := p.queueingHintMap[pInfo.Pod.Spec.SchedulerName]

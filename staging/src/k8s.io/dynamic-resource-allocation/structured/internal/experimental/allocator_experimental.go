@@ -90,6 +90,8 @@ type Allocator struct {
 	allocatedState AllocatedState
 	classLister    DeviceClassLister
 	slices         []*resourceapi.ResourceSlice
+	slicesByNode   map[string][]*resourceapi.ResourceSlice
+	slicesShared   []*resourceapi.ResourceSlice
 	celCache       *cel.Cache
 	// availableCounters contains the available counters for individual
 	// ResourceSlices. It acts as a cache that is updated the first time
@@ -121,12 +123,33 @@ func NewAllocator(ctx context.Context,
 	classLister DeviceClassLister,
 	slices []*resourceapi.ResourceSlice,
 	celCache *cel.Cache,
+	preBuiltByNode map[string][]*resourceapi.ResourceSlice,
+	preBuiltShared []*resourceapi.ResourceSlice,
 ) (*Allocator, error) {
+	var slicesByNode map[string][]*resourceapi.ResourceSlice
+	var slicesShared []*resourceapi.ResourceSlice
+	if preBuiltByNode != nil {
+		slicesByNode = preBuiltByNode
+		slicesShared = preBuiltShared
+	} else {
+		slicesByNode = make(map[string][]*resourceapi.ResourceSlice, len(slices))
+		slicesShared = make([]*resourceapi.ResourceSlice, 0)
+		for _, slice := range slices {
+			nodeName := ptr.Deref(slice.Spec.NodeName, "")
+			if nodeName != "" {
+				slicesByNode[nodeName] = append(slicesByNode[nodeName], slice)
+			} else {
+				slicesShared = append(slicesShared, slice)
+			}
+		}
+	}
 	return &Allocator{
 		features:          features,
 		allocatedState:    allocatedState,
 		classLister:       classLister,
 		slices:            slices,
+		slicesByNode:      slicesByNode,
+		slicesShared:      slicesShared,
 		celCache:          celCache,
 		availableCounters: make(map[string]counterSets),
 	}, nil
@@ -151,7 +174,8 @@ func (a *Allocator) Allocate(ctx context.Context, node *v1.Node, claims []*resou
 
 	alloc.logger.V(5).Info("Gathering pools", "slices", alloc.slices)
 	// First determine all eligible pools.
-	pools, err := GatherPools(ctx, alloc.slices, node, a.features)
+	slicesForNode := slices.Concat(a.slicesByNode[node.Name], a.slicesShared)
+	pools, err := GatherPools(ctx, slicesForNode, node, a.features)
 	if err != nil {
 		return nil, fmt.Errorf("gather pool information: %w", err)
 	}

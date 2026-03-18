@@ -178,6 +178,10 @@ type DynamicResources struct {
 	enableConsumableCapacity      bool
 
 	fh         framework.Handle
+	// Cached slice index to avoid rebuilding every PreFilter call.
+	cachedSliceIndex   *structured.SliceIndex
+	cachedSliceIndexMu sync.Mutex
+
 	clientset  kubernetes.Interface
 	celCache   *cel.Cache
 	draManager framework.SharedDRAManager
@@ -718,7 +722,15 @@ func (pl *DynamicResources) PreFilter(ctx context.Context, state fwk.CycleState,
 			DeviceStatus:         pl.enableDeviceStatus,
 			ConsumableCapacity:   pl.enableConsumableCapacity,
 		}
-		allocator, err := structured.NewAllocator(ctx, features, *allocatedState, pl.draManager.DeviceClasses(), slices, pl.celCache)
+		// Use or rebuild cached slice index.
+		pl.cachedSliceIndexMu.Lock()
+		idx := pl.cachedSliceIndex
+		if idx == nil || len(idx.Slices) != len(slices) {
+			idx = structured.BuildSliceIndex(slices)
+			pl.cachedSliceIndex = idx
+		}
+		pl.cachedSliceIndexMu.Unlock()
+		allocator, err := structured.NewAllocator(ctx, features, *allocatedState, pl.draManager.DeviceClasses(), slices, pl.celCache, idx)
 		if err != nil {
 			return nil, statusError(logger, err)
 		}

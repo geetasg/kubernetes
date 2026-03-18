@@ -18,6 +18,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 
 	"k8s.io/component-base/cli"
 	_ "k8s.io/component-base/logs/json/register" // for JSON log format registration
@@ -27,6 +28,8 @@ import (
 )
 
 func main() {
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1)
 	command := app.NewSchedulerCommand()
 	code := cli.Run(command)
 	os.Exit(code)

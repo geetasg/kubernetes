@@ -105,12 +105,34 @@ type Allocator interface {
 // some problem was detected which makes it impossible to allocate claims.
 //
 // The returned Allocator can be used multiple times and is thread-safe.
+// SliceIndex is a pre-built index of ResourceSlices by node name.
+type SliceIndex struct {
+	ByNode map[string][]*resourceapi.ResourceSlice
+	Shared []*resourceapi.ResourceSlice
+	Slices []*resourceapi.ResourceSlice
+}
+
+// BuildSliceIndex builds a SliceIndex from a list of ResourceSlices.
+func BuildSliceIndex(slices []*resourceapi.ResourceSlice) *SliceIndex {
+	byNode := make(map[string][]*resourceapi.ResourceSlice, len(slices))
+	shared := make([]*resourceapi.ResourceSlice, 0)
+	for _, s := range slices {
+		if s.Spec.NodeName != nil && *s.Spec.NodeName != "" {
+			byNode[*s.Spec.NodeName] = append(byNode[*s.Spec.NodeName], s)
+		} else {
+			shared = append(shared, s)
+		}
+	}
+	return &SliceIndex{ByNode: byNode, Shared: shared, Slices: slices}
+}
+
 func NewAllocator(ctx context.Context,
 	features Features,
 	allocatedState AllocatedState,
 	classLister DeviceClassLister,
 	slices []*resourceapi.ResourceSlice,
 	celCache *cel.Cache,
+	sliceIndex *SliceIndex,
 ) (Allocator, error) {
 	// The actual implementation may vary depending on which features are enabled.
 	// At the moment there is only one. The goal is to have three:
@@ -139,7 +161,7 @@ func NewAllocator(ctx context.Context,
 		// All required features supported?
 		if allocator.supportedFeatures.Set().IsSuperset(features.Set()) {
 			// Use it!
-			return allocator.newAllocator(ctx, features, allocatedState, classLister, slices, celCache)
+			return allocator.newAllocator(ctx, features, allocatedState, classLister, slices, celCache, sliceIndex)
 		}
 	}
 	return nil, fmt.Errorf("internal error: no allocator available for feature set %v", features)
@@ -153,6 +175,7 @@ var availableAllocators = []struct {
 		classLister DeviceClassLister,
 		slices []*resourceapi.ResourceSlice,
 		celCache *cel.Cache,
+		sliceIndex *SliceIndex,
 	) (Allocator, error)
 }{
 	// Most stable first.
@@ -164,6 +187,7 @@ var availableAllocators = []struct {
 			classLister DeviceClassLister,
 			slices []*resourceapi.ResourceSlice,
 			celCache *cel.Cache,
+			sliceIndex *SliceIndex,
 		) (Allocator, error) {
 			return stable.NewAllocator(ctx, features, allocatedState.AllocatedDevices, classLister, slices, celCache)
 		},
@@ -176,6 +200,7 @@ var availableAllocators = []struct {
 			classLister DeviceClassLister,
 			slices []*resourceapi.ResourceSlice,
 			celCache *cel.Cache,
+			sliceIndex *SliceIndex,
 		) (Allocator, error) {
 			return incubating.NewAllocator(ctx, features, allocatedState.AllocatedDevices, classLister, slices, celCache)
 		},
@@ -188,8 +213,15 @@ var availableAllocators = []struct {
 			classLister DeviceClassLister,
 			slices []*resourceapi.ResourceSlice,
 			celCache *cel.Cache,
+			sliceIndex *SliceIndex,
 		) (Allocator, error) {
-			return experimental.NewAllocator(ctx, features, allocateState, classLister, slices, celCache)
+			var byNode map[string][]*resourceapi.ResourceSlice
+			var shared []*resourceapi.ResourceSlice
+			if sliceIndex != nil {
+				byNode = sliceIndex.ByNode
+				shared = sliceIndex.Shared
+			}
+			return experimental.NewAllocator(ctx, features, allocateState, classLister, slices, celCache, byNode, shared)
 		},
 	},
 }

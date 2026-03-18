@@ -129,6 +129,10 @@ type stateData struct {
 
 	// nodeAllocations caches the result of Filter for the nodes, its key is node name.
 	nodeAllocations map[string]nodeAllocation
+
+	// takenPools points to the plugin-level sync.Map for allocate-all optimization.
+	takenPools *sync.Map
+	sliceIndex *structured.SliceIndex
 }
 
 func (d *stateData) Clone() fwk.StateData {
@@ -736,6 +740,38 @@ func (pl *DynamicResources) PreFilter(ctx context.Context, state fwk.CycleState,
 		}
 		s.allocator = allocator
 		s.nodeAllocations = make(map[string]nodeAllocation)
+		s.sliceIndex = idx
+
+		// For allocate-all, per-pod, non-admin claims: enable fast Filter skip.
+		allExclAll := true
+		for _, claim := range claims.toAllocate() {
+			ownedByPod := false
+			for _, ref := range claim.OwnerReferences {
+				if ref.UID == pod.UID {
+					ownedByPod = true
+					break
+				}
+			}
+			if !ownedByPod {
+				allExclAll = false
+				break
+			}
+			for i := range claim.Spec.Devices.Requests {
+				req := &claim.Spec.Devices.Requests[i]
+				if req.Exactly == nil || req.Exactly.AllocationMode != resourceapi.DeviceAllocationModeAll || ptr.Deref(req.Exactly.AdminAccess, false) {
+					allExclAll = false
+					break
+				}
+			}
+			if !allExclAll {
+				break
+			}
+		}
+		if allExclAll {
+			if ct, ok := pl.draManager.ResourceClaims().(*claimTracker); ok {
+				s.takenPools = &ct.allocatedDevices.takenPools
+			}
+		}
 	}
 	s.claims = claims
 	return nil, nil
@@ -993,6 +1029,15 @@ func (pl *DynamicResources) Filter(ctx context.Context, cs fwk.CycleState, pod *
 			c, cancel := context.WithTimeout(allocCtx, pl.filterTimeout)
 			defer cancel()
 			allocCtx = c
+		}
+
+		// Fast path: skip nodes with taken pools for allocate-all claims.
+		if state.takenPools != nil && state.sliceIndex != nil {
+			for _, slice := range state.sliceIndex.ByNode[node.Name] {
+				if _, taken := state.takenPools.Load(poolKey{slice.Spec.Driver, slice.Spec.Pool.Name}); taken {
+					return statusUnschedulable(logger, "pool already has allocated devices", "pod", klog.KObj(pod), "node", klog.KObj(node))
+				}
+			}
 		}
 
 		// Check which claims need to be allocated.

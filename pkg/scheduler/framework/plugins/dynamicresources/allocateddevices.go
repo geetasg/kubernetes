@@ -92,12 +92,17 @@ func foreachAllocatedDevice(claim *resourceapi.ResourceClaim,
 // and compare them.
 //
 // All methods are thread-safe. Get returns a cloned set.
+// poolKey identifies a driver/pool for the takenPools optimization.
+type poolKey struct{ driver, pool string }
+
 type allocatedDevices struct {
 	logger klog.Logger
 
 	mutex                     sync.RWMutex
 	revision                  int64
 	ids                       sets.Set[structured.DeviceID]
+	takenPools                sync.Map // poolKey -> struct{}
+	takenPoolCounts           map[poolKey]int
 	shareIDs                  sets.Set[structured.SharedDeviceID]
 	capacities                structured.ConsumedCapacityCollection
 	enabledConsumableCapacity bool
@@ -107,6 +112,7 @@ func newAllocatedDevices(logger klog.Logger) *allocatedDevices {
 	return &allocatedDevices{
 		logger:                    logger,
 		ids:                       sets.New[structured.DeviceID](),
+		takenPoolCounts:           make(map[poolKey]int),
 		shareIDs:                  sets.New[structured.SharedDeviceID](),
 		capacities:                structured.NewConsumedCapacityCollection(),
 		enabledConsumableCapacity: utilfeature.DefaultFeatureGate.Enabled(features.DRAConsumableCapacity),
@@ -223,6 +229,9 @@ func (a *allocatedDevices) addDevices(claim *resourceapi.ResourceClaim) {
 	a.revision++
 	for _, deviceID := range deviceIDs {
 		a.ids.Insert(deviceID)
+		pk := poolKey{deviceID.Driver.String(), deviceID.Pool.String()}
+		a.takenPoolCounts[pk]++
+		a.takenPools.Store(pk, struct{}{})
 	}
 	for _, shareID := range shareIDs {
 		a.shareIDs.Insert(shareID)
@@ -270,6 +279,12 @@ func (a *allocatedDevices) removeDevices(claim *resourceapi.ResourceClaim) {
 	a.revision++
 	for _, deviceID := range deviceIDs {
 		a.ids.Delete(deviceID)
+		pk := poolKey{deviceID.Driver.String(), deviceID.Pool.String()}
+		a.takenPoolCounts[pk]--
+		if a.takenPoolCounts[pk] <= 0 {
+			delete(a.takenPoolCounts, pk)
+			a.takenPools.Delete(pk)
+		}
 	}
 	for _, shareID := range shareIDs {
 		a.shareIDs.Delete(shareID)
